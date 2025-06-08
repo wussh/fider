@@ -11,9 +11,26 @@ jobs:
     name: Build, Test, and Lint
     runs-on: ubuntu-latest
 
+    services:
+        postgres:
+          image: postgres:14
+          ports:
+            - 5432:5432
+          env:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: fider_test
+          options: >-
+            --health-cmd pg_isready
+            --health-interval 10s
+            --health-timeout 5s
+            --health-retries 5
+
     env:
       COMMITHASH: ${{ github.sha }}
       VERSION: ${{ github.ref_name }}
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fider_test?sslmode=disable
+      NODE_ENV: test
 
     steps:
       - name: Checkout code
