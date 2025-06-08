@@ -1,4 +1,4 @@
-name: CI and Deploy
+name: CI
 
 on:
   push:
@@ -7,9 +7,108 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-push:
-    name: Build and Push Docker Image
+  build-test-lint:
+    name: Build, Test, and Lint
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fider_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      minio:
+        image: getfider/minio:0.0.2
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ACCESS_KEY: s3user
+          MINIO_SECRET_KEY: s3user-s3cr3t
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      COMMITHASH: ${{ github.sha }}
+      VERSION: ${{ github.ref_name }}
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fider_test?sslmode=disable
+      NODE_ENV: test
+      BLOB_STORAGE_S3_ENDPOINT_URL: http://localhost:9000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Cache Node.js modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Tidy Go modules
+        run: go mod tidy
+
+      - name: Install Node.js dependencies with npm ci
+        run: npm ci
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+
+      - name: Install godotenv-cli
+        run: go install github.com/joho/godotenv/cmd/godotenv@latest
+
+      - name: Lint server code
+        run: make lint-server
+
+      - name: Lint UI code
+        run: make lint-ui
+
+      - name: Build the application
+        run: make build
+
+      - name: Run server unit tests
+        run: make test-server
+
+      - name: Run UI unit tests
+        run: make test-ui
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build-test-lint
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
@@ -21,6 +120,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -29,15 +131,10 @@ jobs:
         with:
           context: .
           push: true
-          tags: yourusername/yourimage:latest
+          tags: wushie/fider:latest,wushie/fider:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  deploy:
-    name: Deploy to Server via SSH
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
       - name: SSH into server and deploy
         uses: cross-the-world/ssh-scp-ssh-pipelines@latest
         env:
