@@ -35,6 +35,9 @@ jobs:
       - name: Install Node.js dependencies
         run: npm ci
 
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+
       - name: Lint server
         run: make lint-server
 
