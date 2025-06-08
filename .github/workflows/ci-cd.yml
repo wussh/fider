@@ -37,11 +37,12 @@ jobs:
 
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v6
+
+      - name: Install godotenv-cli
+        uses: go get github.com/joho/godotenv
       
       - name: Lint server
-        run: |
-            export $(cat .test.env | xargs)
-            make test-server
+        run: make lint-server
 
       - name: Lint UI
         run: make lint-ui
