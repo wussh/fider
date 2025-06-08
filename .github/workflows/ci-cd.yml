@@ -1,4 +1,4 @@
-name: CI
+name: CI and Deploy
 
 on:
   push:
@@ -7,94 +7,19 @@ on:
     branches: [ main ]
 
 jobs:
-  build-test-lint:
-    name: Build, Test, and Lint
+  build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
-
-    services:
-        postgres:
-          image: postgres:14
-          ports:
-            - 5432:5432
-          env:
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: postgres
-            POSTGRES_DB: fider_test
-          options: >-
-            --health-cmd pg_isready
-            --health-interval 10s
-            --health-timeout 5s
-            --health-retries 5
-
-        minio:
-          image: getfider/minio:0.0.2
-          ports:
-            - 9000:9000
-          env:
-            MINIO_ACCESS_KEY: s3user
-            MINIO_SECRET_KEY: s3user-s3cr3t
-          options: >-
-            --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-            --health-interval 10s
-            --health-timeout 5s
-            --health-retries 5
-            
-    env:
-      COMMITHASH: ${{ github.sha }}
-      VERSION: ${{ github.ref_name }}
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fider_test?sslmode=disable
-      NODE_ENV: test
-      BLOB_STORAGE_S3_ENDPOINT_URL: http://localhost:9000
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Go dependencies
-        run: go mod tidy
-
-      - name: Install Node.js dependencies
-        run: npm ci
-
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-
-      - name: Install godotenv-cli
-        run: go install github.com/joho/godotenv/cmd/godotenv@latest
-      
-      - name: Lint server
-        run: make lint-server
-
-      - name: Lint UI
-        run: make lint-ui
-
-      - name: Build
-        run: make build
-
-      - name: Run unit tests (server)
-        run: make test-server
-
-      - name: Run unit tests (UI)
-        run: make test-ui
-       
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -104,6 +29,32 @@ jobs:
         with:
           context: .
           push: true
-          tags: wushie/fider:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: yourusername/yourimage:latest
+
+  deploy:
+    name: Deploy to Server via SSH
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: SSH into server and deploy
+        uses: cross-the-world/ssh-scp-ssh-pipelines@latest
+        env:
+          REPO_URL: ${{ github.repositoryUrl }}
+          PROJECT_DIR: /home/user/prod
+        with:
+          host: ${{ secrets.DC_HOST }}
+          user: ${{ secrets.DC_USER }}
+          pass: ${{ secrets.DC_PASS }}
+          port: ${{ secrets.DC_PORT }}
+          connect_timeout: 10s
+          first_ssh: |
+            echo "Cloning repository..."
+            rm -rf ${{ env.PROJECT_DIR }}
+            git clone ${{ env.REPO_URL }} ${{ env.PROJECT_DIR }}
+            cd ${{ env.PROJECT_DIR }}
+            echo "Running docker compose down..."
+            docker compose down -f docker-compose-prod.yml
+            echo "Running docker compose up -d..."
+            docker compose -f docker-compose-prod.yml up -d
