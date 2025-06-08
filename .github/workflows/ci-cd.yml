@@ -26,11 +26,25 @@ jobs:
             --health-timeout 5s
             --health-retries 5
 
+        minio:
+          image: getfider/minio:0.0.2
+          ports:
+            - 9000:9000
+          env:
+            MINIO_ACCESS_KEY: s3user
+            MINIO_SECRET_KEY: s3user-s3cr3t
+          options: >-
+            --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+            --health-interval 10s
+            --health-timeout 5s
+            --health-retries 5
+            
     env:
       COMMITHASH: ${{ github.sha }}
       VERSION: ${{ github.ref_name }}
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/fider_test?sslmode=disable
       NODE_ENV: test
+      BLOB_STORAGE_S3_ENDPOINT_URL: http://localhost:9000
 
     steps:
       - name: Checkout code
