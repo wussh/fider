@@ -135,23 +135,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: SSH into server and deploy
-        uses: cross-the-world/ssh-scp-ssh-pipelines@latest
+      - name: Add Cloudflare GPG key
+        run: |
+          sudo mkdir -p --mode=0755 /usr/share/keyrings
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+
+      - name: Add Cloudflare repo to APT sources
+        run: |
+          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+
+      - name: Install cloudflared
+        run: sudo apt-get update && sudo apt-get install -y cloudflared
+
+      - name: SSH via Cloudflare Tunnel
         env:
-          REPO_URL: ${{ github.repositoryUrl }}
-          PROJECT_DIR: /home/user/prod
-        with:
-          host: ${{ secrets.DC_HOST }}
-          user: ${{ secrets.DC_USER }}
-          pass: ${{ secrets.DC_PASS }}
-          port: ${{ secrets.DC_PORT }}
-          connect_timeout: 10s
-          first_ssh: |
-            echo "Cloning repository..."
-            rm -rf ${{ env.PROJECT_DIR }}
-            git clone ${{ env.REPO_URL }} ${{ env.PROJECT_DIR }}
-            cd ${{ env.PROJECT_DIR }}
-            echo "Running docker compose down..."
-            docker compose down -f docker-compose-prod.yml
-            echo "Running docker compose up -d..."
-            docker compose -f docker-compose-prod.yml up -d
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o "StrictHostKeyChecking=no" \
+              -o "ProxyCommand=cloudflared access ssh --hostname linux.wush.site" \
+              softwaredev@linux.wush.site
+
+      ## For ip public server deployment, uncomment the following steps
+      # - name: SSH into server and deploy
+      #   uses: cross-the-world/ssh-scp-ssh-pipelines@latest
+      #   env:
+      #     REPO_URL: ${{ github.repositoryUrl }}
+      #     PROJECT_DIR: /home/user/prod
+      #   with:
+      #     host: ${{ secrets.DC_HOST }}
+      #     user: ${{ secrets.DC_USER }}
+      #     pass: ${{ secrets.DC_PASS }}
+      #     port: ${{ secrets.DC_PORT }}
+      #     connect_timeout: 10s
+      #     first_ssh: |
+      #       echo "Cloning repository..."
+      #       rm -rf ${{ env.PROJECT_DIR }}
+      #       git clone ${{ env.REPO_URL }} ${{ env.PROJECT_DIR }}
+      #       cd ${{ env.PROJECT_DIR }}
+      #       echo "Running docker compose down..."
+      #       docker compose down -f docker-compose-prod.yml
+      #       echo "Running docker compose up -d..."
+      #       docker compose -f docker-compose-prod.yml up -d
