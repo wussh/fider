@@ -147,16 +147,50 @@ jobs:
       - name: Install cloudflared
         run: sudo apt-get update && sudo apt-get install -y cloudflared
 
-      - name: SSH via Cloudflare Tunnel
+      # - name: SSH via Cloudflare Tunnel
+      #   env:
+      #     SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+      #     chmod 600 ~/.ssh/id_rsa
+      #     ssh -o "StrictHostKeyChecking=no" \
+      #         -o "ProxyCommand=cloudflared access ssh --hostname linux.wush.site" \
+      #         softwaredev@linux.wush.site
+
+      - name: SSH via Cloudflare Tunnel and deploy app
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+
           ssh -o "StrictHostKeyChecking=no" \
               -o "ProxyCommand=cloudflared access ssh --hostname linux.wush.site" \
-              softwaredev@linux.wush.site
+              softwaredev@linux.wush.site << 'EOF'
+            set -e
+
+            # Clone or update repo
+            if [ -d fider ]; then
+              echo "Updating existing repo..."
+              cd fider
+              git pull
+            else
+              echo "Cloning repo..."
+              git clone https://github.com/wussh/fider.git
+              cd fider
+            fi
+
+            # Docker compose deploy
+            echo "Bringing down old containers..."
+            docker compose down
+
+            echo "Starting new containers..."
+            docker compose up -d
+
+            echo "Deployment complete."
+          EOF
 
       ## For ip public server deployment, uncomment the following steps
       # - name: SSH into server and deploy
